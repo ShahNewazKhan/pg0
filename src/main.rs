@@ -1618,3 +1618,41 @@ fn main() {
         process::exit(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::is_port_available;
+    use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+
+    /// A port held only on IPv6 loopback must be reported unavailable. The old
+    /// IPv4-only probe returned `true` here, which let pg0 collide with an
+    /// IPv6/dual-stack listener (e.g. Docker's `[::]:5432`).
+    #[test]
+    fn ipv6_held_port_is_unavailable() {
+        let listener = match TcpListener::bind((Ipv6Addr::LOCALHOST, 0)) {
+            Ok(l) => l,
+            Err(_) => return, // IPv6 unavailable on this host — skip.
+        };
+        let port = listener.local_addr().unwrap().port();
+        assert!(!is_port_available(port), "IPv6-held port should be unavailable");
+    }
+
+    /// A port held on IPv4 loopback must be reported unavailable.
+    #[test]
+    fn ipv4_held_port_is_unavailable() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(!is_port_available(port), "IPv4-held port should be unavailable");
+    }
+
+    /// A free port (bound then released) is reported available.
+    #[test]
+    fn free_port_is_available() {
+        let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert!(is_port_available(port));
+    }
+}
