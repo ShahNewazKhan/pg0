@@ -322,9 +322,23 @@ fn expand_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// Check if a port is available for binding
+/// Check if a port is available for binding.
+///
+/// PostgreSQL started with the default `listen_addresses = 'localhost'` binds
+/// *both* IPv4 (`127.0.0.1`) and IPv6 (`::1`) loopback. Probing only IPv4
+/// reports a port as free when it is actually held by an IPv6 or dual-stack
+/// listener — e.g. a Docker-published `[::]:5432` — which then causes a silent
+/// port collision instead of auto-allocating a free port. Treat a port as taken
+/// if binding either loopback family returns `AddrInUse`; ignore other errors
+/// (such as IPv6 being disabled on the host) so they don't mark the port
+/// unavailable.
 fn is_port_available(port: u16) -> bool {
-    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    fn in_use(result: std::io::Result<std::net::TcpListener>) -> bool {
+        matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::AddrInUse)
+    }
+    let v4 = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port));
+    let v6 = std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port));
+    !in_use(v4) && !in_use(v6)
 }
 
 /// Find an available port, starting from the given port
